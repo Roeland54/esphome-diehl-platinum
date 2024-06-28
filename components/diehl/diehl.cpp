@@ -103,7 +103,9 @@ void DiehlComponent::update() {
 	float day_energy = rx_msg[19]*256*256*256+rx_msg[20]*256*256+rx_msg[21]*256+rx_msg[22];
 
   this->power_sensor_->publish_state(power);
-  this->day_energy_sensor_->publish_state(day_energy);
+  if (day_energy != 0.0){
+    this->day_energy_sensor_->publish_state(day_energy);
+  }
 }
 
 void DiehlComponent::loop() {
