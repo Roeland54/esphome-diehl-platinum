@@ -32,7 +32,8 @@ class DiehlComponent : public PollingComponent, public uart::UARTDevice {
 
   // Methods
   void update_time();
-  void calc_checksum();
+  void clear_uart_rx_buffer_();
+  void calc_checksum(int len);
   void fetch_data(int index);
   int convert_to_seconds(int hour, int min, int sec);
   void find_last_index_based_on_time();

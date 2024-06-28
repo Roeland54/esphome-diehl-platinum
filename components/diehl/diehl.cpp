@@ -71,6 +71,9 @@ void DiehlComponent::update_time() {
     tx_msg[4] = (time.year - 2000) & 0xFF;
     tx_msg[5] = time.month;
     tx_msg[6] = time.day_of_month;
+
+    ESP_LOGI(TAG, "current date: %d/%d/%d", tx_msg[4], tx_msg[5], tx_msg[6]);
+
     current_day_of_year = time.day_of_year;
   }
 }
@@ -95,6 +98,12 @@ void DiehlComponent::find_last_index_based_on_time() {
   int minute = rx_msg[5];
   int second = rx_msg[6];
 
+  if (hour == 0 && minute == 0 && second == 0){
+    return;
+  }
+
+  ESP_LOGI(TAG, "received timestamp: %i/%i/%i", hour, minute, second);
+
   ESPTime time = time_->now();
   int current_time_seconds = convert_to_seconds(time.hour, time.minute, time.second);
   int timestamp_seconds = convert_to_seconds(hour, minute, second);
@@ -102,7 +111,7 @@ void DiehlComponent::find_last_index_based_on_time() {
   ESP_LOGI(TAG, "current seconds: %i", current_time_seconds);
   ESP_LOGI(TAG, "timestamp seconds: %i", timestamp_seconds);
 
-  int indexes = (current_time_seconds - timestamp_seconds) / 30;
+  int indexes = (current_time_seconds - timestamp_seconds) / 31;
 
   ESP_LOGI(TAG, "index diff: %i", indexes);
 
@@ -110,7 +119,7 @@ void DiehlComponent::find_last_index_based_on_time() {
     return;
   }
 
-  last_valid_index = last_valid_index + indexes - 2;
+  last_valid_index = last_valid_index + indexes - 10;
   ESP_LOGI(TAG, "new last valid index: %i", last_valid_index);
   finding_last_index = false;
 }
@@ -121,12 +130,27 @@ int DiehlComponent::convert_to_seconds(int hour, int minute, int second) {
 
 void DiehlComponent::setup() {
   ESP_LOGI(TAG, "setup called");
+
+  tx_msg[0] = -59;
+  tx_msg[1] = 19;                   
+  tx_msg[2] = 3;           
+  tx_msg[3] = 0;           
+  tx_msg[4] = 0;           
+  tx_msg[5] = -61;    
+
+  calc_checksum(6);
+
+  clear_uart_rx_buffer_();
+
+  this->flush();
+  this->write_array(tx_msg, 8);
+
+  clear_uart_rx_buffer_();
+
   tx_msg[0] = 45;
   tx_msg[1] = 19;
   tx_msg[2] = 6;
   tx_msg[3] = 18;
-
-  update_time(); // add the current time to the message
 
   ESP_LOGI(TAG, "setup done");
 }
@@ -139,7 +163,7 @@ void DiehlComponent::update() {
   update_time();
 
   end_of_list = false;
-  for (int i = last_valid_index; !end_of_list; i++) {
+  for (int i = (last_valid_index + 1); !end_of_list; i++) {
     fetch_data(i);
   }
 
@@ -162,9 +186,10 @@ void DiehlComponent::fetch_data(int index) {
   tx_msg[7] = diH;
   tx_msg[8] = diL;
 
-  calc_checksum();
+  calc_checksum(9);
 
   this->flush();
+  clear_uart_rx_buffer_();
   this->write_array(tx_msg, 11);
 
   // unsigned char buffer[30] = {
@@ -173,15 +198,22 @@ void DiehlComponent::fetch_data(int index) {
   // };
 
   unsigned char buffer[30] = {0};
-  this->read_array(buffer, 30);
+  int buffer_len = 0;
+  int data;
+  int timeout = 50;  // ms
 
-  if (buffer[0] == 132){
-    end_of_list = true;
-    finding_last_index = false;
-    if (index != 0){
-      last_valid_index = index--;
+  // Read the data from the UART
+  while (timeout > 0) {
+    if (this->available()) {
+      data = this->read();
+      if (data > -1){
+        buffer[buffer_len] = (uint8_t) data;
+        buffer_len++;
+      }
+    } else {
+      delay(1);
+      timeout--;
     }
-    return;
   }
 
   // Create a string to hold the formatted output
@@ -195,15 +227,28 @@ void DiehlComponent::fetch_data(int index) {
   // Log the entire buffer at once
   ESP_LOGI(TAG, "response: %s", log_buffer);
 
+  if (buffer[0] == 132 || buffer[0] == 0){
+    end_of_list = true;
+    finding_last_index = false;
+    return;
+  }
+
   last_valid_index = index;
   memcpy(rx_msg, buffer, 30);
 }
 
-void DiehlComponent::calc_checksum() {
+void DiehlComponent::clear_uart_rx_buffer_() {
+  uint8_t tmp;
+  while (this->available()) {
+    this->read_byte(&tmp);
+  }
+}
+
+void DiehlComponent::calc_checksum(int len) {
 	int crc = 65535; 
 	//unsigned char rValue[2];
 
-	for (int RS_index = 0; RS_index < 9; RS_index++) {
+	for (int RS_index = 0; RS_index < len; RS_index++) {
 		int dataInt = tx_msg[RS_index] & 0xFF;
 		int rIndex = dataInt ^ (crc & 0xFFFF) >> 8;
 		rIndex &= 65535;
@@ -211,8 +256,8 @@ void DiehlComponent::calc_checksum() {
 		crc &= 65535;
 	}
   crc &= 65535;
-	tx_msg[9] = (crc & 0xFF00) >> 8;
-	tx_msg[10] = (crc & 0xFF);
+	tx_msg[len] = (crc & 0xFF00) >> 8;
+	tx_msg[len + 1] = (crc & 0xFF);
 }
 
 }  // namespace diehl
