@@ -19,8 +19,8 @@ class DiehlComponent : public PollingComponent, public uart::UARTDevice {
 
   void dump_config() override;
   float get_setup_priority() const override;
-  void loop() override;
   void setup() override;
+  void loop() override;
   void update() override;
 
  protected:

@@ -61,73 +61,6 @@ void DiehlComponent::dump_config() {
 
 float DiehlComponent::get_setup_priority() const { return setup_priority::DATA; }
 
-void DiehlComponent::update_time() {
-  ESPTime time = time_->now();
-
-  if(current_day_of_year != time.day_of_year)
-  {
-    last_valid_index = 0; //reset the index
-
-    tx_msg[4] = (time.year - 2000) & 0xFF;
-    tx_msg[5] = time.month;
-    tx_msg[6] = time.day_of_month;
-
-    ESP_LOGI(TAG, "current date: %d/%d/%d", tx_msg[4], tx_msg[5], tx_msg[6]);
-
-    current_day_of_year = time.day_of_year;
-  }
-}
-
-void DiehlComponent::loop() {
-  if (finding_last_index){
-    if (!time_->now().is_valid()){
-      return;
-    }
-    update_time();
-
-    ESP_LOGI(TAG, "finding last index");
-    ESP_LOGI(TAG, "finding last index: %i", last_valid_index);
-    fetch_data(last_valid_index + 1);
-
-    find_last_index_based_on_time();
-  }
-}
-
-void DiehlComponent::find_last_index_based_on_time() {
-  int hour = rx_msg[4];
-  int minute = rx_msg[5];
-  int second = rx_msg[6];
-
-  if (hour == 0 && minute == 0 && second == 0){
-    return;
-  }
-
-  ESP_LOGI(TAG, "received timestamp: %i/%i/%i", hour, minute, second);
-
-  ESPTime time = time_->now();
-  int current_time_seconds = convert_to_seconds(time.hour, time.minute, time.second);
-  int timestamp_seconds = convert_to_seconds(hour, minute, second);
-
-  ESP_LOGI(TAG, "current seconds: %i", current_time_seconds);
-  ESP_LOGI(TAG, "timestamp seconds: %i", timestamp_seconds);
-
-  int indexes = (current_time_seconds - timestamp_seconds) / 31;
-
-  ESP_LOGI(TAG, "index diff: %i", indexes);
-
-  if (0 > indexes){
-    return;
-  }
-
-  last_valid_index = last_valid_index + indexes - 10;
-  ESP_LOGI(TAG, "new last valid index: %i", last_valid_index);
-  finding_last_index = false;
-}
-
-int DiehlComponent::convert_to_seconds(int hour, int minute, int second) {
-  return hour * 3600 + minute * 60 + second;
-}
-
 void DiehlComponent::setup() {
   ESP_LOGI(TAG, "setup called");
 
@@ -139,12 +72,7 @@ void DiehlComponent::setup() {
   tx_msg[5] = -61;    
 
   calc_checksum(6);
-
-  clear_uart_rx_buffer_();
-
-  this->flush();
   this->write_array(tx_msg, 8);
-
   clear_uart_rx_buffer_();
 
   tx_msg[0] = 45;
@@ -178,6 +106,67 @@ void DiehlComponent::update() {
   this->day_energy_sensor_->publish_state(day_energy);
 }
 
+void DiehlComponent::loop() {
+  if (finding_last_index){
+    if (!time_->now().is_valid()){
+      return;
+    }
+
+    update_time();
+
+    ESP_LOGI(TAG, "finding last index");
+    ESP_LOGI(TAG, "finding last index: %i", last_valid_index);
+    fetch_data(last_valid_index + 1);
+
+    find_last_index_based_on_time();
+  }
+}
+
+void DiehlComponent::find_last_index_based_on_time() {
+  int hour = rx_msg[4];
+  int minute = rx_msg[5];
+  int second = rx_msg[6];
+
+  if (hour == 0 && minute == 0 && second == 0){
+    return;
+  }
+
+  ESP_LOGI(TAG, "received timestamp: %i:%i:%i", hour, minute, second);
+
+  ESPTime time = time_->now();
+  int current_time_seconds = convert_to_seconds(time.hour, time.minute, time.second);
+  int timestamp_seconds = convert_to_seconds(hour, minute, second);
+
+  int indexes = (current_time_seconds - timestamp_seconds) / 31;
+
+  ESP_LOGI(TAG, "index diff: %i", indexes);
+
+  if (0 > indexes){
+    return;
+  }
+
+  last_valid_index = last_valid_index + indexes - 6;
+  ESP_LOGI(TAG, "new last valid index: %i", last_valid_index);
+  finding_last_index = false;
+}
+
+void DiehlComponent::update_time() {
+  ESPTime time = time_->now();
+
+  if(current_day_of_year != time.day_of_year)
+  {
+    last_valid_index = 0; //reset the index
+
+    tx_msg[4] = (time.year - 2000) & 0xFF;
+    tx_msg[5] = time.month;
+    tx_msg[6] = time.day_of_month;
+
+    ESP_LOGI(TAG, "current date: %d/%d/%d", tx_msg[4], tx_msg[5], tx_msg[6]);
+
+    current_day_of_year = time.day_of_year;
+  }
+}
+
 void DiehlComponent::fetch_data(int index) { 
   ESP_LOGI(TAG, "fetching data for index: %i", index);
 
@@ -187,15 +176,8 @@ void DiehlComponent::fetch_data(int index) {
   tx_msg[8] = diL;
 
   calc_checksum(9);
-
-  this->flush();
   clear_uart_rx_buffer_();
   this->write_array(tx_msg, 11);
-
-  // unsigned char buffer[30] = {
-  //   210, 49, 25, 18, 1, 48, 48, 12, 0, 1, 48, 0, 1, 36, 0, 
-  //   227, 0, 0, 111, 0, 0, 0, 0, 0, 0, 15, 0, 2, 1, 19
-  // };
 
   unsigned char buffer[30] = {0};
   int buffer_len = 0;
@@ -260,5 +242,8 @@ void DiehlComponent::calc_checksum(int len) {
 	tx_msg[len + 1] = (crc & 0xFF);
 }
 
+int DiehlComponent::convert_to_seconds(int hour, int minute, int second) {
+  return hour * 3600 + minute * 60 + second;
+}
 }  // namespace diehl
 }  // namespace esphome
